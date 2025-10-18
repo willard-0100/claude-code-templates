@@ -22,6 +22,7 @@ class IndexPageManager {
             mcps: new Set(),
             settings: new Set(),
             hooks: new Set(),
+            skills: new Set(),
             templates: new Set(),
             plugins: new Set()
         };
@@ -88,6 +89,9 @@ class IndexPageManager {
                 }
             }
 
+            // Update sort selector for initial filter
+            this.updateSortSelector();
+
             // Display components
             this.displayCurrentFilter();
 
@@ -110,7 +114,7 @@ class IndexPageManager {
         const segments = path.split('/').filter(segment => segment);
 
         // Check if first segment is a valid filter
-        const validFilters = ['agents', 'commands', 'settings', 'hooks', 'mcps', 'templates', 'plugins'];
+        const validFilters = ['agents', 'commands', 'settings', 'hooks', 'mcps', 'skills', 'templates', 'plugins'];
         const firstSegment = segments[0];
 
         if (firstSegment && validFilters.includes(firstSegment)) {
@@ -227,11 +231,44 @@ class IndexPageManager {
             btn.classList.toggle('active', btn.dataset.filter === filter);
         });
 
+        // Update sort selector options based on filter
+        this.updateSortSelector();
+
         this.displayCurrentFilter();
 
         // Show category filters for the new filter
         if (typeof showCategoryFilters === 'function') {
             showCategoryFilters(filter);
+        }
+    }
+
+    // Update sort selector based on current filter
+    updateSortSelector() {
+        const sortSelector = document.getElementById('sortSelector');
+        if (!sortSelector) return;
+
+        const currentValue = sortSelector.value;
+
+        if (this.currentFilter === 'agents') {
+            // Add "Verified" option for agents if it doesn't exist
+            const verifiedOption = Array.from(sortSelector.options).find(opt => opt.value === 'verified');
+            if (!verifiedOption) {
+                const option = document.createElement('option');
+                option.value = 'verified';
+                option.textContent = 'Verified First';
+                sortSelector.insertBefore(option, sortSelector.options[0]);
+            }
+        } else {
+            // Remove "Verified" option for other filters
+            const verifiedOption = Array.from(sortSelector.options).find(opt => opt.value === 'verified');
+            if (verifiedOption) {
+                verifiedOption.remove();
+                // Reset to downloads if verified was selected
+                if (currentValue === 'verified') {
+                    sortSelector.value = 'downloads';
+                    this.currentSort = 'downloads';
+                }
+            }
         }
     }
 
@@ -328,7 +365,7 @@ class IndexPageManager {
     // Sort components based on current sort option
     sortComponents(components) {
         const sortedComponents = [...components]; // Create a copy to avoid mutating original
-        
+
         if (this.currentSort === 'downloads') {
             // Sort by downloads (descending) - components with no downloads go to the end
             sortedComponents.sort((a, b) => {
@@ -343,8 +380,24 @@ class IndexPageManager {
                 const nameB = (b.name || '').toLowerCase();
                 return nameA.localeCompare(nameB);
             });
+        } else if (this.currentSort === 'verified') {
+            // Sort by verified status first (100% score), then by downloads
+            sortedComponents.sort((a, b) => {
+                // Check if component has 100% validation score
+                const aVerified = a.security && a.security.validated && a.security.score === 100 && a.security.valid;
+                const bVerified = b.security && b.security.validated && b.security.score === 100 && b.security.valid;
+
+                // Verified components come first
+                if (aVerified && !bVerified) return -1;
+                if (!aVerified && bVerified) return 1;
+
+                // If both verified or both not verified, sort by downloads
+                const downloadsA = a.downloads || 0;
+                const downloadsB = b.downloads || 0;
+                return downloadsB - downloadsA;
+            });
         }
-        
+
         return sortedComponents;
     }
     
@@ -363,6 +416,7 @@ class IndexPageManager {
         this.availableCategories.mcps.clear();
         this.availableCategories.settings.clear();
         this.availableCategories.hooks.clear();
+        this.availableCategories.skills.clear();
         this.availableCategories.templates.clear();
         
         // Collect categories from each component type
@@ -400,7 +454,14 @@ class IndexPageManager {
                 this.availableCategories.hooks.add(category);
             });
         }
-        
+
+        if (this.componentsData.skills && Array.isArray(this.componentsData.skills)) {
+            this.componentsData.skills.forEach(component => {
+                const category = component.category || 'general';
+                this.availableCategories.skills.add(category);
+            });
+        }
+
         // Collect categories from templates (use language as category for language templates)
         if (this.componentsData.templates && Array.isArray(this.componentsData.templates)) {
             this.componentsData.templates.forEach(template => {
@@ -439,6 +500,7 @@ class IndexPageManager {
             case 'mcps':
             case 'settings':
             case 'hooks':
+            case 'skills':
                 this.displayComponents(grid, this.currentFilter);
                 break;
             default:
@@ -552,9 +614,6 @@ class IndexPageManager {
                             ${plugin.agents > 0 ? `<span class="plugin-stat"><span class="stat-icon">🤖</span>${plugin.agents}</span>` : ''}
                             ${plugin.mcpServers > 0 ? `<span class="plugin-stat"><span class="stat-icon">🔌</span>${plugin.mcpServers}</span>` : ''}
                         </div>
-                        <div class="plugin-keywords">
-                            ${plugin.keywords.map(keyword => `<span class="keyword-badge">${keyword}</span>`).join('')}
-                        </div>
                     </div>
                     <button class="plugin-view-details-btn" onclick="window.location.href='/plugin/${plugin.name}'; event.stopPropagation();">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -658,7 +717,8 @@ class IndexPageManager {
             command: { icon: '⚡', color: '#4ecdc4' },
             mcp: { icon: '🔌', color: '#45b7d1' },
             setting: { icon: '⚙️', color: '#9c88ff' },
-            hook: { icon: '🪝', color: '#ff8c42' }
+            hook: { icon: '🪝', color: '#ff8c42' },
+            skill: { icon: '🎨', color: '#f59e0b' }
         };
         
         const config = typeConfig[component.type];
@@ -675,14 +735,17 @@ class IndexPageManager {
         const categoryLabel = `<div class="category-label">${this.formatComponentName(categoryName)}</div>`;
         
         // Create download badge if downloads data exists
-        const downloadBadge = component.downloads && component.downloads > 0 ? 
+        const downloadBadge = component.downloads && component.downloads > 0 ?
             `<div class="download-badge" title="${component.downloads} downloads">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/>
                 </svg>
                 ${this.formatNumber(component.downloads)}
             </div>` : '';
-        
+
+        // Create validation badge for agents with security data
+        const validationBadge = this.createValidationBadge(component.security);
+
         return `
             <div class="template-card" data-type="${component.type}">
                 <div class="card-inner">
@@ -691,6 +754,7 @@ class IndexPageManager {
                         ${categoryLabel}
                         <div class="framework-logo" style="color: ${config.color}">
                             <span class="component-icon">${config.icon}</span>
+                            ${validationBadge}
                         </div>
                         <h3 class="template-title">${this.formatComponentName(component.name)}</h3>
                         ${component.type === 'mcp' ? 
@@ -786,7 +850,7 @@ class IndexPageManager {
 
     getComponentDescription(component) {
         let description = '';
-        
+
         if (component.description) {
             description = component.description;
         } else if (component.content) {
@@ -803,17 +867,39 @@ class IndexPageManager {
                 }
             }
         }
-        
+
         if (!description) {
             description = `A ${component.type} component for Claude Code.`;
         }
-        
+
         // Truncate description to max 120 characters for proper card display
         if (description.length > 120) {
             description = description.substring(0, 117) + '...';
         }
-        
+
         return description;
+    }
+
+    /**
+     * Create validation badge HTML - Only for perfect 100% score
+     */
+    createValidationBadge(validation) {
+        if (!validation || !validation.validated) return '';
+
+        const score = validation.score || 0;
+        const isValid = validation.valid;
+
+        // ONLY show badge for perfect score (100%)
+        if (score === 100 && isValid) {
+            return `<div class="verified-checkmark" title="100% Validated - Perfect Security Score">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="#1DA1F2">
+                    <path d="M22.5 12.5c0-1.58-.875-2.95-2.148-3.6.154-.435.238-.905.238-1.4 0-2.21-1.71-3.998-3.818-3.998-.47 0-.92.084-1.336.25C14.818 2.415 13.51 1.5 12 1.5s-2.816.917-3.437 2.25c-.415-.165-.866-.25-1.336-.25-2.11 0-3.818 1.79-3.818 4 0 .494.083.964.237 1.4-1.272.65-2.147 2.018-2.147 3.6 0 1.495.782 2.798 1.942 3.486-.02.17-.032.34-.032.514 0 2.21 1.708 4 3.818 4 .47 0 .92-.086 1.335-.25.62 1.334 1.926 2.25 3.437 2.25 1.512 0 2.818-.916 3.437-2.25.415.163.865.248 1.336.248 2.11 0 3.818-1.79 3.818-4 0-.174-.012-.344-.033-.513 1.158-.687 1.943-1.99 1.943-3.484zm-6.616-3.334l-4.334 6.5c-.145.217-.382.334-.625.334-.143 0-.288-.04-.416-.126l-.115-.094-2.415-2.415c-.293-.293-.293-.768 0-1.06s.768-.294 1.06 0l1.77 1.767 3.825-5.74c.23-.345.696-.436 1.04-.207.346.23.44.696.21 1.04z"/>
+                </svg>
+            </div>`;
+        }
+
+        // Don't show anything for scores below 100
+        return '';
     }
 
     // Update filter button counts
@@ -821,67 +907,77 @@ class IndexPageManager {
         // Get accurate total counts from data loader (includes full data counts)
         const totalCounts = window.dataLoader.getTotalCounts();
         if (!totalCounts) return;
-        
+
         // Update each filter button with accurate total count
         const agentsBtn = document.querySelector('[data-filter="agents"]');
         const commandsBtn = document.querySelector('[data-filter="commands"]');
         const mcpsBtn = document.querySelector('[data-filter="mcps"]');
         const settingsBtn = document.querySelector('[data-filter="settings"]');
         const hooksBtn = document.querySelector('[data-filter="hooks"]');
+        const skillsBtn = document.querySelector('[data-filter="skills"]');
         const templatesBtn = document.querySelector('[data-filter="templates"]');
-        
+
         if (agentsBtn) {
-            agentsBtn.innerHTML = `🤖 Agents (${totalCounts.agents})`;
+            agentsBtn.innerHTML = `<span class="chip-icon">🤖</span>agents (${totalCounts.agents})`;
         }
         if (commandsBtn) {
-            commandsBtn.innerHTML = `⚡ Commands (${totalCounts.commands})`;
+            commandsBtn.innerHTML = `<span class="chip-icon">⚡</span>commands (${totalCounts.commands})`;
         }
         if (mcpsBtn) {
-            mcpsBtn.innerHTML = `🔌 MCPs (${totalCounts.mcps})`;
+            mcpsBtn.innerHTML = `<span class="chip-icon">🔌</span>mcps (${totalCounts.mcps})`;
         }
         if (settingsBtn) {
-            settingsBtn.innerHTML = `⚙️ Settings (${totalCounts.settings})`;
+            settingsBtn.innerHTML = `<span class="chip-icon">⚙️</span>settings (${totalCounts.settings})`;
         }
         if (hooksBtn) {
-            hooksBtn.innerHTML = `🪝 Hooks (${totalCounts.hooks})`;
+            hooksBtn.innerHTML = `<span class="chip-icon">🪝</span>hooks (${totalCounts.hooks})`;
+        }
+        if (skillsBtn) {
+            skillsBtn.innerHTML = `<span class="new-label">NEW</span><span class="chip-icon">🎨</span>skills (${totalCounts.skills})`;
         }
         if (templatesBtn) {
-            templatesBtn.innerHTML = `📦 Templates (${totalCounts.templates})`;
+            templatesBtn.innerHTML = `<span class="chip-icon">📦</span>templates (${totalCounts.templates})`;
         }
     }
 
     // Create Add Component card
     createAddComponentCard(type) {
         const typeConfig = {
-            agents: { 
-                icon: '🤖', 
-                name: 'Agent', 
+            agents: {
+                icon: '🤖',
+                name: 'Agent',
                 description: 'Create a new AI specialist agent',
                 color: '#ff6b6b'
             },
-            commands: { 
-                icon: '⚡', 
-                name: 'Command', 
+            commands: {
+                icon: '⚡',
+                name: 'Command',
                 description: 'Add a custom slash command',
                 color: '#4ecdc4'
             },
-            mcps: { 
-                icon: '🔌', 
-                name: 'MCP', 
+            mcps: {
+                icon: '🔌',
+                name: 'MCP',
                 description: 'Build a Model Context Protocol integration',
                 color: '#45b7d1'
             },
-            settings: { 
-                icon: '⚙️', 
-                name: 'Setting', 
+            settings: {
+                icon: '⚙️',
+                name: 'Setting',
                 description: 'Configure Claude Code behavior',
                 color: '#9c88ff'
             },
-            hooks: { 
-                icon: '🪝', 
-                name: 'Hook', 
+            hooks: {
+                icon: '🪝',
+                name: 'Hook',
                 description: 'Automate tool execution workflows',
                 color: '#ff8c42'
+            },
+            skills: {
+                icon: '🎨',
+                name: 'Skill',
+                description: 'Add modular capabilities with progressive disclosure',
+                color: '#f59e0b'
             }
         };
         
@@ -1188,6 +1284,15 @@ function handleSortChange(sortValue) {
 // Global function for handling filter click with navigation
 function handleFilterClick(event, filter) {
     event.preventDefault(); // Prevent default link navigation
+
+    // If plugins filter, scroll to plugins section
+    if (filter === 'plugins') {
+        const contentGrid = document.getElementById('contentGrid');
+        if (contentGrid) {
+            contentGrid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }
+
     setUnifiedFilter(filter);
 }
 
@@ -1266,6 +1371,11 @@ function showCategoryFilters(componentType) {
                 const mcps = dataLoader.getComponentsByType('mcp');
                 console.log('MCPs data:', mcps);
                 categories = getUniqueCategories(mcps);
+                break;
+            case 'skills':
+                const skills = dataLoader.getComponentsByType('skill');
+                console.log('Skills data:', skills);
+                categories = getUniqueCategories(skills);
                 break;
             case 'templates':
                 const templates = dataLoader.getComponentsByType('template');
